@@ -1,130 +1,116 @@
-import tkinter as tk
-from tkinter import messagebox, filedialog
+import streamlit as st
 import pandas as pd
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report, accuracy_score
-import matplotlib.pyplot as plt
-import seaborn as sns
 import joblib
+import os
 
-class WineQualityApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Wine Quality Classifier")
-        self.data = None
-        self.pipeline = None
-        self.columns = []
+st.set_page_config(page_title="Wine Quality Classifier", layout="wide")
 
-        self.create_widgets()
+st.title("🍷 Wine Quality Classification App")
+st.write("Upload a CSV file with wine chemical data and predict if it's a good quality wine.")
 
-    def create_widgets(self):
-        tk.Button(self.root, text="Load CSV", command=self.load_csv).grid(row=0, column=0, padx=10, pady=10)
-        tk.Button(self.root, text="Show Stats", command=self.show_stats).grid(row=0, column=1, padx=10, pady=10)
-        tk.Button(self.root, text="Train Model", command=self.train_model).grid(row=0, column=2, padx=10, pady=10)
-        tk.Button(self.root, text="Predict", command=self.predict_quality).grid(row=0, column=3, padx=10, pady=10)
+# 1. Upload CSV
+uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+if uploaded_file:
+    data = pd.read_csv(uploaded_file)
 
-        self.entries_frame = tk.LabelFrame(self.root, text="Enter Feature Values")
-        self.entries_frame.grid(row=1, column=0, columnspan=4, padx=10, pady=10, sticky="ew")
+    if 'quality' not in data.columns:
+        st.error("The uploaded file must contain a 'quality' column.")
+        st.stop()
 
-    def load_csv(self):
-        file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
-        if not file_path:
-            return
-        self.data = pd.read_csv(file_path)
+    # Binary classification target
+    data['quality_class'] = data['quality'].apply(lambda x: 1 if x >= 7 else 0)
 
-        if 'quality' not in self.data.columns:
-            messagebox.showerror("Error", "CSV must contain a 'quality' column")
-            return
+    st.subheader("🔍 Data Preview")
+    st.dataframe(data.head())
 
-        self.data['quality_class'] = self.data['quality'].apply(lambda x: 1 if x >= 7 else 0)
-        self.columns = [col for col in self.data.columns if col not in ['quality', 'quality_class']]
+    # Show missing values
+    st.subheader("🧼 Missing Values")
+    st.write(data.isnull().sum())
 
-        for widget in self.entries_frame.winfo_children():
-            widget.destroy()
+    # Visualizations
+    st.subheader("📊 Class Distribution")
+    fig1, ax1 = plt.subplots()
+    sns.countplot(x='quality_class', data=data, ax=ax1)
+    ax1.set_xlabel("Quality Class (0 = Not Good, 1 = Good)")
+    ax1.set_title("Distribution of Wine Quality Classes")
+    st.pyplot(fig1)
 
-        self.entries = {}
-        for idx, col in enumerate(self.columns):
-            tk.Label(self.entries_frame, text=col).grid(row=idx, column=0, sticky="w")
-            entry = tk.Entry(self.entries_frame)
-            entry.grid(row=idx, column=1)
-            self.entries[col] = entry
+    st.subheader("📈 Correlation Matrix")
+    fig2, ax2 = plt.subplots(figsize=(12, 8))
+    sns.heatmap(data.corr(), annot=True, cmap="coolwarm", ax=ax2)
+    st.pyplot(fig2)
 
-        messagebox.showinfo("Loaded", f"Data loaded with {self.data.shape[0]} rows.")
+    # Train model
+    st.subheader("⚙️ Model Training")
+    if st.button("Train Random Forest Model"):
+        X = data.drop(['quality', 'quality_class'], axis=1)
+        y = data['quality_class']
+        feature_names = X.columns
 
-    def show_stats(self):
-        if self.data is None:
-            messagebox.showwarning("Warning", "Load data first.")
-            return
-        print("Missing values per column:\n", self.data.isnull().sum())
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
 
-        plt.figure(figsize=(10, 6))
-        sns.countplot(x='quality_class', data=self.data)
-        plt.title('Wine Quality Distribution')
-        plt.xlabel('Class (0 = Not Good, 1 = Good)')
-        plt.ylabel('Count')
-        plt.show()
-
-        plt.figure(figsize=(12, 8))
-        corr = self.data.corr()
-        sns.heatmap(corr, annot=True, cmap='coolwarm')
-        plt.title('Correlation Matrix')
-        plt.show()
-
-    def train_model(self):
-        if self.data is None:
-            messagebox.showwarning("Warning", "Load data first.")
-            return
-
-        X = self.data[self.columns]
-        y = self.data['quality_class']
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-
-        self.pipeline = Pipeline([
+        pipeline = Pipeline([
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', StandardScaler()),
             ('classifier', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'))
         ])
 
-        self.pipeline.fit(X_train, y_train)
-        y_pred = self.pipeline.predict(X_test)
+        pipeline.fit(X_train, y_train)
+        y_pred = pipeline.predict(X_test)
 
         acc = accuracy_score(y_test, y_pred)
-        print("Classification Report:\n", classification_report(y_test, y_pred))
-        print(f"Accuracy: {acc:.2f}")
-        messagebox.showinfo("Training Complete", f"Model trained with accuracy: {acc:.2f}")
+        st.success(f"Model trained successfully! Accuracy: {acc:.2f}")
 
-        # Plot Feature Importance
-        importances = self.pipeline.named_steps['classifier'].feature_importances_
-        importance_df = pd.DataFrame({'Feature': self.columns, 'Importance': importances}).sort_values('Importance', ascending=False)
-        plt.figure(figsize=(10, 6))
-        sns.barplot(x='Importance', y='Feature', data=importance_df)
-        plt.title('Feature Importance')
-        plt.show()
+        # Classification report
+        st.text("Classification Report:")
+        st.text(classification_report(y_test, y_pred))
 
-        joblib.dump(self.pipeline, "wine_quality_model.pkl")
+        # Feature importance
+        importances = pipeline.named_steps['classifier'].feature_importances_
+        importance_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance': importances
+        }).sort_values(by='Importance', ascending=False)
 
-    def predict_quality(self):
-        if self.pipeline is None:
-            messagebox.showwarning("Warning", "Train the model first.")
-            return
+        st.subheader("🌟 Feature Importance")
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        sns.barplot(x='Importance', y='Feature', data=importance_df, ax=ax3)
+        st.pyplot(fig3)
 
-        try:
-            input_data = [float(self.entries[col].get()) for col in self.columns]
-        except ValueError:
-            messagebox.showerror("Error", "Please enter valid numeric values for all fields.")
-            return
+        # Save model
+        joblib.dump(pipeline, 'wine_quality_model.pkl')
+        st.success("Model saved as 'wine_quality_model.pkl'")
 
-        prediction = self.pipeline.predict([input_data])[0]
-        result = "Good Quality (1)" if prediction == 1 else "Not Good (0)"
-        messagebox.showinfo("Prediction Result", f"The predicted wine quality is: {result}")
+# 2. Manual Prediction
+if os.path.exists('wine_quality_model.pkl'):
+    st.subheader("🧪 Try a Prediction")
+    model = joblib.load('wine_quality_model.pkl')
 
-# Run the app
-root = tk.Tk()
-app = WineQualityApp(root)
-root.mainloop()
+    # Get feature names from the trained model
+    try:
+        features = model.named_steps['classifier'].feature_names_in_
+    except:
+        features = X.columns if 'X' in locals() else []
+
+    input_data = []
+    col1, col2 = st.columns(2)
+    for i, feature in enumerate(features):
+        col = col1 if i % 2 == 0 else col2
+        val = col.number_input(f"{feature}", step=0.1)
+        input_data.append(val)
+
+    if st.button("Predict Wine Quality"):
+        prediction = model.predict([input_data])[0]
+        result = "🍷 Good Quality Wine" if prediction == 1 else "🚫 Not Good Quality"
+        st.success(f"Prediction Result: {result}")
